@@ -1,0 +1,25 @@
+{
+  "name": "pi-dacmicu",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "tsx test/base-todo.test.ts && tsx test/todo-loop-integration.test.ts"
+  },
+  "pi": {
+    "extensions": [
+      "./packages/base/index.ts",
+      "./packages/todo/index.ts"
+    ]
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "^0.74.0",
+    "@earendil-works/pi-coding-agent": "^0.74.0",
+    "@earendil-works/pi-tui": "^0.74.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
