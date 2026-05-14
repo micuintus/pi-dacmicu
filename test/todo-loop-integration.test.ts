@@ -315,13 +315,13 @@ function createMockCtx(sessionId = "test-session"): ExtensionContext {
 	const beforeCount = pi.messages.length;
 	const handlers = pi.events.get("agent_end") || [];
 	for (const h of handlers) await h(event, ctx);
-	assert.equal(pi.messages.length, beforeCount, "No followUp when assistant stopReason is aborted");
+	assert.equal(pi.messages.length, beforeCount, "No followUp on the aborted turn itself");
 
-	// Next turn should stay paused
+	// Next non-aborted turn re-engages the loop (option 2: skip aborted turn only).
 	for (const h of handlers) await h({ type: "agent_end", messages: [] }, ctx);
-	assert.equal(pi.messages.length, beforeCount, "Loop stays paused after stopReason abort");
+	assert.equal(pi.messages.length, beforeCount + 1, "Loop resumes on next non-aborted turn");
 
-	console.log("✓ Loop bails when assistant stopReason is aborted");
+	console.log("✓ Loop bails on aborted turn, resumes on next non-aborted turn");
 }
 
 // Error: iterate() throws → notify, no crash
@@ -394,7 +394,7 @@ function createMockCtx(sessionId = "test-session"): ExtensionContext {
 	console.log("✓ Loop survives sendMessage() rejecting and notifies UI");
 }
 
-// Escape hard-stops loop for session
+// Escape skips the aborted turn; loop resumes next turn
 {
 	const pi = createMockPi();
 	todoFactory(pi);
@@ -428,24 +428,24 @@ function createMockCtx(sessionId = "test-session"): ExtensionContext {
 	for (const h of handlers) await h({ type: "agent_end", messages: [] }, ctxWithTodos);
 	assert.equal(pi.messages.length, 1, "Loop fires on first agent_end");
 
-	// Aborted → bails, session paused
+	// Aborted → bails on this turn only
 	const ctxAborted = { ...ctxWithTodos, signal: { aborted: true } };
 	for (const h of handlers) await h({ type: "agent_end", messages: [] }, ctxAborted);
-	assert.equal(pi.messages.length, 1, "No followUp when signal aborted");
+	assert.equal(pi.messages.length, 1, "No followUp on aborted turn");
 
-	// Normal but paused → stays stopped
+	// Next non-aborted turn → loop resumes (option 2)
 	for (const h of handlers) await h({ type: "agent_end", messages: [] }, ctxWithTodos);
-	assert.equal(pi.messages.length, 1, "Loop stays paused after abort across turns");
+	assert.equal(pi.messages.length, 2, "Loop resumes on next non-aborted turn");
 
-	console.log("✓ Escape hard-stops the loop for the session");
+	console.log("✓ Escape skips the aborted turn; loop resumes next turn");
 }
 
-// Pause persists without session events
+// Multiple consecutive aborts all skip; first non-aborted turn resumes
 {
 	const pi = createMockPi();
 	todoFactory(pi);
 
-	const sid = "test-session-persist";
+	const sid = "test-session-multi-abort";
 	const ctxWithTodos = {
 		cwd: "/tmp/test",
 		sessionManager: {
@@ -470,18 +470,18 @@ function createMockCtx(sessionId = "test-session"): ExtensionContext {
 
 	const handlers = pi.events.get("agent_end") || [];
 
-	// Abort to pause
-	for (const h of handlers) await h({ type: "agent_end", messages: [] }, ctxWithTodos);
-	assert.equal(pi.messages.length, 0, "Loop bails on abort");
-
-	// Multiple subsequent agent_end events — should stay paused
-	const ctxNormal = { ...ctxWithTodos, signal: undefined };
+	// Three consecutive aborted agent_end events → no followUp
 	for (let i = 0; i < 3; i++) {
-		for (const h of handlers) await h({ type: "agent_end", messages: [] }, ctxNormal);
+		for (const h of handlers) await h({ type: "agent_end", messages: [] }, ctxWithTodos);
 	}
-	assert.equal(pi.messages.length, 0, "Loop stays paused across multiple agent_end events");
+	assert.equal(pi.messages.length, 0, "Loop bails on every aborted turn");
 
-	console.log("✓ Pause persists without session events");
+	// Next non-aborted turn → loop resumes
+	const ctxNormal = { ...ctxWithTodos, signal: undefined };
+	for (const h of handlers) await h({ type: "agent_end", messages: [] }, ctxNormal);
+	assert.equal(pi.messages.length, 1, "Loop resumes after the abort streak");
+
+	console.log("✓ Loop resumes after a streak of aborted turns");
 }
 
 // Async iterate
@@ -547,11 +547,11 @@ function createMockCtx(sessionId = "test-session"): ExtensionContext {
 	// Abort session A
 	for (const h of handlers) await h({ type: "agent_end", messages: [] }, ctxA);
 
-	// Session B should still fire
+	// Session B should still fire (per-turn evaluation, no shared pause state)
 	for (const h of handlers) await h({ type: "agent_end", messages: [] }, ctxB);
-	assert.equal(pi.messages.length, 1, "Session B fires even though A is paused");
+	assert.equal(pi.messages.length, 1, "Session B fires while A's turn was aborted");
 
-	console.log("✓ Cross-session isolation: pause A does not pause B");
+	console.log("✓ Cross-session isolation: abort in A does not affect B");
 }
 
 // Branch with other messages but no todo toolResult

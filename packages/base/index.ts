@@ -8,8 +8,6 @@ export interface LoopDriver {
 		| Promise<{ content: (TextContent | ImageContent)[]; customType: string } | null>;
 }
 
-const pausedSessions = new Set<string>();
-
 function wasAborted(event: AgentEndEvent, ctx: ExtensionContext): boolean {
 	if (ctx.signal?.aborted) return true;
 	return event.messages.some(
@@ -19,19 +17,8 @@ function wasAborted(event: AgentEndEvent, ctx: ExtensionContext): boolean {
 
 export function attachLoopDriver(pi: ExtensionAPI, driver: LoopDriver): void {
 	pi.on("agent_end", async (event, ctx) => {
-		const sid = ctx.sessionManager.getSessionId();
-
-		if (ctx.hasPendingMessages()) {
-			pausedSessions.delete(sid);
-			return;
-		}
-
-		if (wasAborted(event, ctx)) {
-			pausedSessions.add(sid);
-			return;
-		}
-
-		if (pausedSessions.has(sid)) return;
+		if (ctx.hasPendingMessages()) return;
+		if (wasAborted(event, ctx)) return;
 
 		let prompt: { content: (TextContent | ImageContent)[]; customType: string } | null;
 		try {
