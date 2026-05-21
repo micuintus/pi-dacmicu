@@ -5,12 +5,14 @@
   "license": "MIT",
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "tsx test/base-todo.test.ts && tsx test/todo-loop-integration.test.ts"
+    "test": "tsx test/base-todo.test.ts && tsx test/todo-loop-integration.test.ts && tsx test/callback-integration.test.ts && tsx test/evolve-integration.test.ts"
   },
   "pi": {
     "extensions": [
       "./packages/base/index.ts",
-      "./packages/todo/index.ts"
+      "./packages/todo/index.ts",
+      "./packages/callback/index.ts",
+      "./packages/evolve/index.ts"
     ]
   },
   "dependencies": {

@@ -1,59 +1,44 @@
 import type { ExtensionAPI, ExtensionContext, AgentEndEvent } from "@earendil-works/pi-coding-agent";
-import type { TextContent, ImageContent, AssistantMessage } from "@earendil-works/pi-ai";
+import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
 
+export type IterateResult = { content: (TextContent | ImageContent)[]; customType: string };
+
+/** Loop driver contract. iterate() may be sync or async, but if it
+ *  returns a Promise that outlives Pi's runLoop, sendMessage may not
+ *  auto-trigger the next turn until user input. Prefer sync iterate. */
 export interface LoopDriver {
-	iterate(ctx: ExtensionContext):
-		| { content: (TextContent | ImageContent)[]; customType: string }
-		| null
-		| Promise<{ content: (TextContent | ImageContent)[]; customType: string } | null>;
+	iterate(ctx: ExtensionContext): IterateResult | null | Promise<IterateResult | null>;
 }
-
-const pausedSessions = new Set<string>();
 
 function wasAborted(event: AgentEndEvent, ctx: ExtensionContext): boolean {
 	if (ctx.signal?.aborted) return true;
 	return event.messages.some(
-		(m): m is AssistantMessage => m.role === "assistant" && m.stopReason === "aborted",
+		(m) => m.role === "assistant" && (m as any).stopReason === "aborted",
 	);
 }
 
 export function attachLoopDriver(pi: ExtensionAPI, driver: LoopDriver): void {
 	pi.on("agent_end", async (event, ctx) => {
-		const sid = ctx.sessionManager.getSessionId();
+		if (ctx.hasPendingMessages()) return;
+		if (wasAborted(event, ctx)) return;
 
-		if (ctx.hasPendingMessages()) {
-			pausedSessions.delete(sid);
-			return;
-		}
-
-		if (wasAborted(event, ctx)) {
-			pausedSessions.add(sid);
-			return;
-		}
-
-		if (pausedSessions.has(sid)) return;
-
-		let prompt: { content: (TextContent | ImageContent)[]; customType: string } | null;
+		let prompt: IterateResult | null;
 		try {
 			prompt = await driver.iterate(ctx);
 		} catch (err) {
-			ctx.ui?.notify?.(`Loop iterate failed: ${err}`, "error");
+			ctx.ui.notify(`Loop iterate failed: ${err}`, "error");
 			return;
 		}
 
 		if (!prompt) return;
 
 		try {
-			await pi.sendMessage(
-				{
-					customType: prompt.customType,
-					content: prompt.content,
-					display: false,
-				},
-				{ triggerTurn: true, deliverAs: "followUp" },
+			pi.sendMessage(
+				{ customType: prompt.customType, content: prompt.content, display: true },
+				{ triggerTurn: true },
 			);
 		} catch (err) {
-			ctx.ui?.notify?.(`Loop sendMessage failed: ${err}`, "error");
+			ctx.ui.notify(`Loop sendMessage failed: ${err}`, "error");
 		}
 	});
 }
