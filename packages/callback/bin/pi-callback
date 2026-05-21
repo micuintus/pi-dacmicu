@@ -1,0 +1,45 @@
+#!/usr/bin/env node
+// pi-callback CLI. Sends prompt to $PI_CALLBACK_SOCKET, prints subagent text.
+import { createConnection } from "node:net";
+
+const sock = process.env.PI_CALLBACK_SOCKET;
+if (!sock) {
+	process.stderr.write("pi-callback: $PI_CALLBACK_SOCKET not set (run inside a Pi session with @pi-dacmicu/callback loaded)\n");
+	process.exit(2);
+}
+
+const prompt = process.argv.slice(2).join(" ");
+if (!prompt.trim()) {
+	process.stderr.write("pi-callback: missing prompt\nusage: pi-callback \"<prompt>\"\n");
+	process.exit(2);
+}
+
+const client = createConnection(sock);
+let buf = "";
+
+client.on("connect", () => {
+	client.write(JSON.stringify({ prompt }) + "\n");
+});
+
+client.on("data", (chunk) => { buf += chunk.toString("utf8"); });
+
+client.on("end", () => {
+	const line = buf.split("\n")[0] ?? "";
+	let reply;
+	try { reply = JSON.parse(line); }
+	catch {
+		process.stderr.write(`pi-callback: malformed reply: ${line}\n`);
+		process.exit(1);
+	}
+	if (reply.ok) {
+		process.stdout.write(reply.text);
+		process.exit(0);
+	}
+	process.stderr.write(`pi-callback: ${reply.error}\n`);
+	process.exit(1);
+});
+
+client.on("error", (err) => {
+	process.stderr.write(`pi-callback: socket error: ${err.message}\n`);
+	process.exit(1);
+});
