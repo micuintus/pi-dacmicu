@@ -17,6 +17,10 @@ function wasAborted(event: AgentEndEvent, ctx: ExtensionContext): boolean {
 	);
 }
 
+/** Attach a driver. Each call adds an independent agent_end listener.
+ *  Drivers MUST return null when their preconditions aren't met; multiple
+ *  drivers returning non-null in the same agent_end stack follow-ups in one
+ *  turn — that is a driver-design bug, not a base-layer concern. */
 export function attachLoopDriver(pi: ExtensionAPI, driver: LoopDriver): void {
 	pi.on("agent_end", async (event, ctx) => {
 		if (ctx.hasPendingMessages()) return;
