@@ -2,7 +2,10 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@e
 import { Type } from "typebox";
 import { attachLoopDriver } from "../base/index.js";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const SKILLS_DIR = join(dirname(fileURLToPath(import.meta.url)), "skills");
 
 const LOOP_PROMPT = `Evolve iteration.
 
@@ -100,4 +103,6 @@ export default function (pi: ExtensionAPI) {
 			};
 		},
 	});
+
+	pi.on("resources_discover", async () => ({ skillPaths: [SKILLS_DIR] }));
 }
