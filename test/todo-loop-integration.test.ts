@@ -195,8 +195,11 @@ function createMockCtx(sessionId = "test-session"): ExtensionContext {
 	const beforeCount = pi.messages.length;
 	const handlers = pi.events.get("agent_end") || [];
 	for (const h of handlers) await h({ type: "agent_end", messages: [] }, ctxAllDone);
-	assert.equal(pi.messages.length, beforeCount, "No followUp when every item is completed");
-	console.log("✓ Loop exits when all items are completed");
+	assert.equal(pi.messages.length, beforeCount + 1, "FollowUp sent so agent can clear the completed list");
+	const lastMsg = pi.messages[pi.messages.length - 1];
+	assert.equal(lastMsg.customType, "todo-iterate");
+	assert.match(lastMsg.content[0].text, /clear the list/);
+	console.log("✓ Loop prompts to clear list when all items are completed");
 }
 
 // Bail: pending messages

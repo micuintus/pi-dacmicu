@@ -36,21 +36,25 @@ function formatTodoList(todos: TodoItem[]): string {
 }
 
 const ITERATION_PROMPT = (formatted: string): string =>
-	`The TODO loop is iterating. Current list:
-${formatted}
+	`The TODO loop is iterating.
 
 ` +
 	`Before working the next item:
 ` +
-	`1. Reassess the list. Given what we learned in the last turn, are items still in the right order? ` +
+	`1. If every item is already completed, clear the list immediately (pass an empty todoList). ` +
+	`The loop cannot stop while the list still contains items—completed or not. Do not leave completed items sitting.
+` +
+	`2. Reassess the list. Given what we learned in the last turn, are items still in the right order? ` +
 	`Should anything be added, removed, merged, or split?
 ` +
-	`2. If yes, call manage_todo_list(write, todoList=...) to update the list.
+	`3. If yes, call manage_todo_list(write, todoList=...) to update the list.
 ` +
-	`3. Then pick the top not-completed item and work on it. Mark it completed via manage_todo_list when done.
+	`4. Then pick the top not-completed item and work on it. Mark it completed via manage_todo_list when done.
 
 ` +
-	`If every item is already completed, clear the list (empty todoList) to stop the loop cleanly.
+	`Current list:
+${formatted}
+
 ` +
 	`If you genuinely cannot make progress (need user input, blocked by an external problem), ` +
 	`update the list to reflect that — clear it, or mark items completed — and the loop will stop.`;
@@ -59,7 +63,7 @@ export default function (pi: ExtensionAPI) {
 	attachLoopDriver(pi, {
 		iterate(ctx) {
 			const todos = loadTodosFromSession(ctx);
-			if (!todos.some((t) => t.status !== "completed")) return null;
+			if (todos.length === 0) return null;
 			return {
 				customType: "todo-iterate",
 				content: [{ type: "text", text: ITERATION_PROMPT(formatTodoList(todos)) }],
