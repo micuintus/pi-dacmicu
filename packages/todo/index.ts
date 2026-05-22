@@ -63,6 +63,7 @@ export default function (pi: ExtensionAPI) {
 			return {
 				customType: "todo-iterate",
 				content: [{ type: "text", text: ITERATION_PROMPT(formatTodoList(todos)) }],
+				display: false,
 			};
 		},
 	});

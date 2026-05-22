@@ -122,6 +122,7 @@ function createMockCtx(sessionId = "test-session"): ExtensionContext {
 	assert.ok(pi.messages.length > beforeCount, "Loop fires followUp when todos exist");
 	const lastMsg = pi.messages[pi.messages.length - 1];
 	assert.equal(lastMsg.customType, "todo-iterate", "FollowUp is a unified iterate prompt");
+	assert.equal(lastMsg.display, false, "TODO iterate is hidden from transcript");
 	assert.equal(lastMsg.options.triggerTurn, true, "triggerTurn is true");
 	console.log("✓ Loop fires followUp with triggerTurn:true when todos exist");
 }

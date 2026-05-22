@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext, AgentEndEvent } from "@earendil-works/pi-coding-agent";
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
 
-export type IterateResult = { content: (TextContent | ImageContent)[]; customType: string };
+export type IterateResult = { content: (TextContent | ImageContent)[]; customType: string; display?: boolean };
 
 /** Loop driver contract. iterate() may be sync or async, but if it
  *  returns a Promise that outlives Pi's runLoop, sendMessage may not
@@ -34,7 +34,7 @@ export function attachLoopDriver(pi: ExtensionAPI, driver: LoopDriver): void {
 
 		try {
 			pi.sendMessage(
-				{ customType: prompt.customType, content: prompt.content, display: true },
+				{ customType: prompt.customType, content: prompt.content, display: prompt.display ?? true },
 				{ triggerTurn: true },
 			);
 		} catch (err) {
