@@ -1,4 +1,5 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { attachLoopDriver } from "../base/index.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -7,7 +8,7 @@ const LOOP_PROMPT = `Evolve iteration.
 
 Your role (orchestrator):
 1. Read evolve.md (Goal, Metric, Base, Gates, Termination, Inspiration, Ledger). The code being evolved lives in ./target.
-2. Evaluate the ## Termination section against the Ledger. The user wrote those conditions in free form; interpret them faithfully. If any condition is met, call /evolve stop.
+2. Evaluate the ## Termination section against the Ledger. The user wrote those conditions in free form; interpret them faithfully. If any condition is met, call the evolve tool with "stop".
 3. Otherwise spawn a subagent with fresh context (no parent inheritance) using whatever subagent-spawning tool the session offers. Pass it the subagent instructions in the next block. The subagent reads evolve.md on its own.
 4. When the subagent returns, verify a new row was appended to ## Ledger.
 
@@ -53,15 +54,40 @@ export default function (pi: ExtensionAPI) {
 		return true;
 	}
 
+	function handle(args: string, ctx: { cwd: string; ui: { notify: (m: string, l?: "info" | "warning" | "error") => void } }): { action: "started" | "stopped" | "noop"; message: string } {
+		const trimmed = args.trim();
+		if (trimmed.toLowerCase() === "stop") {
+			const stopped = deactivate(ctx.cwd, "Evolve stopped.", ctx.ui.notify);
+			return { action: stopped ? "stopped" : "noop", message: stopped ? "Evolve stopped." : "Evolve was not active." };
+		}
+		const started = activate(ctx.cwd, trimmed, ctx.ui.notify);
+		return {
+			action: started ? "started" : "noop",
+			message: started ? (trimmed ? `Evolve started with hint: ${trimmed}` : "Evolve started.") : "Evolve was already active or evolve.md missing.",
+		};
+	}
+
 	pi.registerCommand("evolve", {
 		description: "Activate or stop the evolve optimization loop. Usage: /evolve [hint] or /evolve stop",
 		async handler(args: string, ctx: ExtensionCommandContext) {
-			const trimmed = args.trim();
-			if (trimmed.toLowerCase() === "stop") {
-				deactivate(ctx.cwd, "Evolve stopped.", ctx.ui.notify);
-				return;
-			}
-			activate(ctx.cwd, trimmed, ctx.ui.notify);
+			handle(args, ctx);
+		},
+	});
+
+	pi.registerTool({
+		name: "evolve",
+		label: "Evolve",
+		description:
+			"Control the evolve optimization loop. Pass 'stop' to halt the loop. Pass any other string as an optional hint to start a fresh run; pass empty string to start without a hint. Mirrors the /evolve slash command exactly.",
+		parameters: Type.Object({
+			args: Type.String({ description: "Either 'stop', a free-form hint to start with, or '' to start without a hint." }),
+		}),
+		async execute(_id, params, _signal, _onUpdate, ctx: ExtensionContext) {
+			const result = handle(params.args, ctx);
+			return {
+				content: [{ type: "text", text: result.message }],
+				details: result,
+			};
 		},
 	});
 

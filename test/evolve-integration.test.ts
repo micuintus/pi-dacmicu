@@ -23,6 +23,10 @@ function createMockPi() {
 		registerCommand(name: string, options: any) {
 			commands.set(name, options.handler);
 		},
+		tools: new Map<string, any>(),
+		registerTool(tool: any) {
+			pi.tools.set(tool.name, tool);
+		},
 	};
 	const fireAgentEnd = async (ctx: ExtensionCommandContext) => {
 		const list = handlers.get("__pi:agent_end") || [];
@@ -122,7 +126,33 @@ const tmp = mkdtempSync(join(tmpdir(), "evolve-test-"));
 	console.log("✓ /evolve stop halts loop");
 }
 
-// 6. Per-cwd isolation: active in A does not fire in B
+// 6. evolve tool is symmetric to /evolve (start + stop)
+{
+	const sub = join(tmp, "tool-symmetry");
+	mkdirSync(sub);
+	writeFileSync(join(sub, "evolve.md"), "# Evolve: test\n");
+	const { pi, fireAgentEnd } = createMockPi();
+	evolveFactory(pi);
+	const tool = pi.tools.get("evolve");
+	assert.ok(tool, "evolve tool registered");
+
+	let notifyMsg = "";
+	const ctx = { ...makeCtx(sub), ui: { notify: (m: string) => (notifyMsg = m) } };
+
+	const startResult = await tool.execute("c1", { args: "speed up" }, undefined, undefined, ctx);
+	assert.equal(startResult.details.action, "started");
+	assert.equal(pi.messages.length, 1, "tool start fires kick message");
+	await fireAgentEnd(makeCtx(sub));
+	assert.equal(pi.messages.length, 2, "kick + iterate");
+
+	const stopResult = await tool.execute("c2", { args: "stop" }, undefined, undefined, ctx);
+	assert.equal(stopResult.details.action, "stopped");
+	await fireAgentEnd(makeCtx(sub));
+	assert.equal(pi.messages.length, 2, "no reminder after tool stop");
+	console.log("✓ evolve tool: start + stop symmetric with /evolve");
+}
+
+// 7. Per-cwd isolation: active in A does not fire in B
 {
 	const subA = join(tmp, "cwd-a");
 	const subB = join(tmp, "cwd-b");
