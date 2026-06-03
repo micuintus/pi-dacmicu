@@ -3,11 +3,13 @@ import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
 
 export type IterateResult = { content: (TextContent | ImageContent)[]; customType: string; display?: boolean };
 
-/** Loop driver contract. iterate() may be sync or async, but if it
- *  returns a Promise that outlives Pi's runLoop, sendMessage may not
- *  auto-trigger the next turn until user input. Prefer sync iterate. */
+/** Loop driver contract. iterate() runs on each agent_end: return a prompt to
+ *  stack a follow-up turn, or null to stay idle. `event.messages` is only THIS
+ *  run's messages (not the full history), so a driver can branch on what the
+ *  just-ended turn did. Prefer sync; a Promise that outlives Pi's runLoop may
+ *  not auto-trigger the next turn until user input. */
 export interface LoopDriver {
-	iterate(ctx: ExtensionContext): IterateResult | null | Promise<IterateResult | null>;
+	iterate(ctx: ExtensionContext, event: AgentEndEvent): IterateResult | null | Promise<IterateResult | null>;
 }
 
 function wasAborted(event: AgentEndEvent, ctx: ExtensionContext): boolean {
@@ -28,7 +30,7 @@ export function attachLoopDriver(pi: ExtensionAPI, driver: LoopDriver): void {
 
 		let prompt: IterateResult | null;
 		try {
-			prompt = await driver.iterate(ctx);
+			prompt = await driver.iterate(ctx, event);
 		} catch (err) {
 			ctx.ui.notify(`Loop iterate failed: ${err}`, "error");
 			return;

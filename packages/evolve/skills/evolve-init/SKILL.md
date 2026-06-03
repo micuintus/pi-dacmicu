@@ -93,6 +93,8 @@ Write `evolve.md` in the parent of `target/`:
 |--------|---------|-------|------|
 ```
 
+**Branch naming convention:** each iteration creates a git branch inside `target/` named `dacmicu/evolve/vN/<slug>`, where `N` is the row's implicit ID (e.g. row #1 → `v1`, row #2 → `v2`). The version number must always match the row ID so the Ledger and branches stay aligned.
+
 ## After writing
 
 Print the file path. Tell the user:

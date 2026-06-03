@@ -1,7 +1,7 @@
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentEndEvent, ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { attachLoopDriver } from "../base/index.js";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,24 +12,58 @@ const LOOP_PROMPT = `Evolve iteration.
 Your role (orchestrator):
 1. Read evolve.md (Goal, Metric, Base, Gates, Termination, Inspiration, Ledger). The code being evolved lives in ./target.
 2. Evaluate the ## Termination section against the Ledger. The user wrote those conditions in free form; interpret them faithfully. If any condition is met, call the evolve tool with "stop".
-3. Otherwise spawn a subagent with fresh context (no parent inheritance) using whatever subagent-spawning tool the session offers. Pass it the subagent instructions in the next block. The subagent reads evolve.md on its own.
-4. When the subagent returns, verify a new row was appended to ## Ledger.
+3. Otherwise delegate exactly one iteration to a subagent and do no evolving yourself, using the most capable subagent system available — ideally one with a good subagent view and plain general-purpose, unopinionated agents (e.g. HazAT/pi-interactive-subagents). Pass the instructions in the next block verbatim; the subagent reads evolve.md on its own. Do NOT pass an \`agent\` name (no worker/scout/reviewer persona), do NOT use fork mode (no inherited parent transcript), and do NOT pass a model override — the child should use the same default model as the parent.
+4. **After spawning the subagent, END YOUR TURN immediately.** Do not read files, do not re-check the ledger, and do not spawn another subagent on this same turn. The loop driver will wake you when the subagent finishes and a new Ledger row appears. Once the iteration completes, confirm that exactly one new ## Ledger row was appended (failed iterations append a GATE_FAILED row too); a hard crash that appends no row pauses the loop rather than racing ahead.
+5. **Duplicate-spawn defence (orchestrator):** if you ever read evolve.md mid-turn and the row count has not grown since your previous read, do NOT spawn again — a subagent is already in flight. End your turn and wait.
 
 Subagent instructions (pass verbatim):
 
 You are one iteration of an evolutionary code-optimization run. Your job:
 1. Read evolve.md: Goal, Metric, Base, Gates, Inspiration, Ledger. <base-ref> is the Base field. The codebase is in ./target.
 2. Study the Ledger. Each row has an implicit ID (#1, #2, …) by position. You are strongly encouraged to git checkout (inside target/) and inspect any existing dacmicu/evolve/* branch whose Idea or Score interests you. The Ledger is a compressed map; the branches are the territory.
-3. Pick a strategy (mental aid, not recorded): evolve (refine the top scorer), diverge (try something unrelated), combine (merge two prior ideas), creative (free invention).
-4. cd target. Create branch: git checkout -b dacmicu/evolve/vN/<slug> <base-ref>, where N = ledger row count + 1 and <slug> is a 1-3 word kebab-case label.
+3. Consider the Ledger and pick a strategy (mental aid only): evolve (refine the top scorer), diverge (try something unrelated), combine (merge two prior ideas), creative (free invention). Once you have an idea you think could work, stick to it — build it, gate it, benchmark it. Do not abandon it to chase a better alternative mid-iteration; this variant gets one shot.
+4. cd target. Create branch: git checkout -b dacmicu/evolve/vN/<slug> <base-ref>, where N is the new row's implicit ID (ledger row count + 1) and <slug> is a 1-3 word kebab-case label. The version number N must always equal the row ID.
 5. Make the change.
-6. Evaluate every Gate. Gates may be shell commands, LLM judgments, or manual checks — follow what the Gate text says. If any Gate fails, set <score> = "GATE_FAILED:<which>" and skip to step 8. Do not delete the branch; failed branches stay for inspection.
-7. If Gates pass, run the benchmark and capture the primary-metric score.
-8. git checkout <base-ref>. Append exactly one row to ## Ledger (in the parent directory, not in target/): | dacmicu/evolve/vN/<slug> | <parents> | <score> | <one-sentence idea> |. Score is "<value> <unit>" on success, "GATE_FAILED:<which>" on failure. Parents is "<base-ref>" when starting from the base, "#N" when building on row N, "#N,#M" when combining rows N and M.
+6. Evaluate every Gate ON THIS VARIANT ONLY. Previous rows were already gated and scored; never re-run gates or benchmarks for them. Gates may be shell commands, LLM judgments, or manual checks — follow what the Gate text says. If any Gate fails, set <score> = "GATE_FAILED:<which>" and skip to step 8. Do not delete the branch; failed branches stay for inspection.
+7. If Gates pass, run the benchmark ONCE for this variant and capture the primary-metric score. Do not benchmark any other branch.
+8. git checkout <base-ref>. Append exactly one row to ## Ledger (in the parent directory, not in target/): | dacmicu/evolve/vN/<slug> | <parents> | <score> | <one-sentence idea> |. N in vN must match the row's implicit ID. Score is "<value> <unit>" on success, "GATE_FAILED:<which>" on failure. Parents is "<base-ref>" when starting from the base, "#N" when building on row N, "#N,#M" when combining rows N and M.
 9. Exit DONE.`;
+
+// Per-wake nudge; the full LOOP_PROMPT is sent only once, at activation.
+const SHORT_REMINDER = `[evolve] You are the orchestrator of an ACTIVE evolve run (see evolve.md). When woken by a finished iteration: evaluate ## Termination against the Ledger; if any condition is met, call the evolve tool with "stop". Otherwise delegate exactly ONE new iteration to a subagent (pass the subagent instructions verbatim; no agent persona, no fork, no model override), then END YOUR TURN. Never spawn twice for the same Ledger state.`;
+
+// A spawn in the just-ended turn means the orchestrator already advanced.
+const SPAWN_TOOLS = new Set(["subagent", "subagent_resume"]);
+
+function turnSpawnedSubagent(event: AgentEndEvent): boolean {
+	for (const m of event.messages) {
+		if (m.role !== "assistant") continue;
+		const content = (m as { content?: unknown }).content;
+		if (!Array.isArray(content)) continue;
+		for (const block of content) {
+			if (block?.type === "toolCall" && SPAWN_TOOLS.has(block?.name)) return true;
+		}
+	}
+	return false;
+}
+
+/** Count appended Ledger rows (lines whose first table cell names a
+ *  dacmicu/evolve/vN branch). This is the tool-agnostic completion signal:
+ *  one finished iteration == one new row, regardless of how the subagent
+ *  was spawned. */
+function ledgerRowCount(cwd: string): number {
+	try {
+		const md = readFileSync(join(cwd, "evolve.md"), "utf8");
+		return (md.match(/^[^\S\n]*\|[^\n]*dacmicu\/evolve\/v\d+/gim) || []).length;
+	} catch {
+		return 0;
+	}
+}
 
 export default function (pi: ExtensionAPI) {
 	const active = new Set<string>();
+	// Ledger row count last reconciled, per cwd.
+	const ledgerAt = new Map<string, number>();
 
 	function activate(cwd: string, hint: string, notify: (m: string, l?: "info" | "warning" | "error") => void): boolean {
 		if (active.has(cwd)) {
@@ -41,9 +75,10 @@ export default function (pi: ExtensionAPI) {
 			return false;
 		}
 		active.add(cwd);
+		ledgerAt.set(cwd, ledgerRowCount(cwd));
 		notify(hint ? `Evolve started. Hint: "${hint}"` : "Evolve started.", "info");
 		const text = hint ? `${LOOP_PROMPT}\n\nUser hint: ${hint}` : LOOP_PROMPT;
-		pi.sendMessage({ customType: "evolve", content: [{ type: "text", text }] }, { triggerTurn: true });
+		pi.sendMessage({ customType: "evolve", content: [{ type: "text", text }], display: true }, { triggerTurn: true });
 		return true;
 	}
 
@@ -53,6 +88,7 @@ export default function (pi: ExtensionAPI) {
 			return false;
 		}
 		active.delete(cwd);
+		ledgerAt.delete(cwd);
 		notify(reason, "info");
 		return true;
 	}
@@ -94,12 +130,29 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	// Re-anchor the orchestrator on every wake (survives compaction).
+	pi.on("before_agent_start", async (_event, ctx) => {
+		if (!active.has(ctx.cwd)) return {};
+		return { message: { customType: "evolve-reminder", content: [{ type: "text", text: SHORT_REMINDER }], display: false } };
+	});
+
+	// Stall watchdog only: the completion steer paces the loop; this kicks
+	// solely when an iteration finished but the orchestrator didn't advance.
 	attachLoopDriver(pi, {
-		iterate(ctx) {
+		iterate(ctx, event) {
 			if (!active.has(ctx.cwd)) return null;
+			const rows = ledgerRowCount(ctx.cwd);
+			// Already advanced this turn — reconcile and stay quiet (no double-wake).
+			if (turnSpawnedSubagent(event)) {
+				ledgerAt.set(ctx.cwd, rows);
+				return null;
+			}
+			const seen = ledgerAt.get(ctx.cwd) ?? rows;
+			if (rows <= seen) return null; // no iteration finished since last reconcile
+			ledgerAt.set(ctx.cwd, rows); // row landed without a spawn → stalled; nudge
 			return {
 				customType: "evolve",
-				content: [{ type: "text", text: LOOP_PROMPT }],
+				content: [{ type: "text", text: SHORT_REMINDER }],
 			};
 		},
 	});
