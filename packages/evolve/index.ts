@@ -47,14 +47,15 @@ function turnSpawnedSubagent(event: AgentEndEvent): boolean {
 	return false;
 }
 
-/** Count appended Ledger rows (lines whose first table cell names a
- *  dacmicu/evolve/vN branch). This is the tool-agnostic completion signal:
- *  one finished iteration == one new row, regardless of how the subagent
- *  was spawned. */
+/** One finished iteration == one new ## Ledger row. Counts the table rather than
+ *  branch names so no naming convention can silently zero the loop's perception. */
 function ledgerRowCount(cwd: string): number {
 	try {
 		const md = readFileSync(join(cwd, "evolve.md"), "utf8");
-		return (md.match(/^[^\S\n]*\|[^\n]*dacmicu\/evolve\/v\d+/gim) || []).length;
+		const ledger = md.split(/^##\s+Ledger\s*$/im)[1] ?? "";
+		const table = ledger.split(/^##\s/m)[0];
+		// Header and separator inflate this by a constant; only the delta is ever read.
+		return (table.match(/^[^\S\n]*\|/gm) || []).length;
 	} catch {
 		return 0;
 	}
@@ -75,8 +76,16 @@ export default function (pi: ExtensionAPI) {
 			return false;
 		}
 		active.add(cwd);
-		ledgerAt.set(cwd, ledgerRowCount(cwd));
-		notify(hint ? `Evolve started. Hint: "${hint}"` : "Evolve started.", "info");
+		// State the perceived row count: a miscount is otherwise invisible until the
+		// loop silently fails to advance.
+		const rows = ledgerRowCount(cwd);
+		ledgerAt.set(cwd, rows);
+		notify(
+			hint
+				? `Evolve started at ${rows} Ledger rows. Hint: "${hint}"`
+				: `Evolve started at ${rows} Ledger rows.`,
+			"info",
+		);
 		const text = hint ? `${LOOP_PROMPT}\n\nUser hint: ${hint}` : LOOP_PROMPT;
 		pi.sendMessage({ customType: "evolve", content: [{ type: "text", text }], display: true }, { triggerTurn: true });
 		return true;
@@ -148,6 +157,13 @@ export default function (pi: ExtensionAPI) {
 				return null;
 			}
 			const seen = ledgerAt.get(ctx.cwd) ?? rows;
+			if (rows < seen) {
+				// Rows edited out by hand would otherwise wedge the loop forever, since
+				// every later wake also compares below the stale high-water mark.
+				ctx.ui?.notify?.(`Evolve: Ledger shrank from ${seen} to ${rows} rows; re-anchoring.`, "warning");
+				ledgerAt.set(ctx.cwd, rows);
+				return null;
+			}
 			if (rows <= seen) return null; // no iteration finished since last reconcile
 			ledgerAt.set(ctx.cwd, rows); // row landed without a spawn → stalled; nudge
 			return {
