@@ -31,4 +31,32 @@ console.log("✓ Base extension factory loads without error");
 	console.log("✓ attachLoopDriver forwards event+messages to iterate");
 }
 
+// A run that ended on a provider error (429 rate limit) must NOT stack a
+// follow-up: otherwise the loop retries at API speed and never stops.
+{
+	const agentEndHandlers: ((event: any, ctx: any) => unknown)[] = [];
+	const sent: any[] = [];
+	const notifications: string[] = [];
+	const pi = {
+		on: (ev: string, h: (event: any, ctx: any) => unknown) => { if (ev === "agent_end") agentEndHandlers.push(h); },
+		sendMessage: (m: any) => { sent.push(m); },
+	} as unknown as import("@earendil-works/pi-coding-agent").ExtensionAPI;
+	attachLoopDriver(pi, {
+		iterate: () => ({ customType: "t", content: [{ type: "text", text: "next" }], display: false }),
+	});
+	const ctx = { hasPendingMessages: () => false, signal: undefined, ui: { notify: (m: string) => { notifications.push(m); } } } as any;
+	const errorEvent = {
+		type: "agent_end",
+		messages: [{
+			role: "assistant",
+			stopReason: "error",
+			errorMessage: 'Error: 429 {"error":{"type":"rate_limit_error"}}',
+		}],
+	};
+	await agentEndHandlers[0](errorEvent, ctx);
+	assert.equal(sent.length, 0, "a failed run does not stack a follow-up turn");
+	assert.equal(notifications.length, 1, "the failure is surfaced as a notification");
+	console.log("✓ attachLoopDriver breaks the loop on a provider error");
+}
+
 console.log("\n🎉 Base minimal tests passed.");

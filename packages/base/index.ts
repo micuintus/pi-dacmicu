@@ -19,6 +19,19 @@ function wasAborted(event: AgentEndEvent, ctx: ExtensionContext): boolean {
 	);
 }
 
+/** Error message of the provider call that failed this run, if any. Stacking a
+ *  follow-up on one spins the loop at API speed: a rate-limited run ends, the
+ *  driver stacks again, the next call 429s, repeat. Drivers break instead and
+ *  let user input re-arm the loop. */
+function endedOnProviderError(event: AgentEndEvent): string | null {
+	for (const m of event.messages) {
+		if (m.role !== "assistant" || (m as any).stopReason !== "error") continue;
+		const message = (m as any).errorMessage;
+		return typeof message === "string" && message.length > 0 ? message : "provider error";
+	}
+	return null;
+}
+
 /** Attach a driver. Each call adds an independent agent_end listener.
  *  Drivers MUST return null when their preconditions aren't met; multiple
  *  drivers returning non-null in the same agent_end stack follow-ups in one
@@ -27,6 +40,12 @@ export function attachLoopDriver(pi: ExtensionAPI, driver: LoopDriver): void {
 	pi.on("agent_end", async (event, ctx) => {
 		if (ctx.hasPendingMessages()) return;
 		if (wasAborted(event, ctx)) return;
+
+		const providerError = endedOnProviderError(event);
+		if (providerError) {
+			ctx.ui.notify(`Loop stopped: the last run failed (${providerError}). Nudge to continue.`, "error");
+			return;
+		}
 
 		let prompt: IterateResult | null;
 		try {
